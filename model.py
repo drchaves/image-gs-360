@@ -576,8 +576,9 @@ class GaussianSplatting2D(nn.Module):
 
         h = images.shape[-2]
         if getattr(self, 'use_erp', False):
-            y_coords = torch.arange(h, device=images.device, dtype=images.dtype)
-            ws_weights = torch.cos((y_coords - h / 2.0 + 0.5) * (torch.pi / h)).view(1, h, 1)
+            phis = torch.arange(h + 1, device=images.device, dtype=images.dtype) * torch.pi / h
+            cos_phis = torch.cos(phis[:-1]) - torch.cos(phis[1:])
+            ws_weights = (cos_phis / cos_phis.mean()).view(1, h, 1)
         else:
             ws_weights = 1.0
         if self.l1_loss_ratio > 1e-7:

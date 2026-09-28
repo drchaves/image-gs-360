@@ -44,9 +44,9 @@ def get_psnr(image1, image2, max_value=1.0):
 
 def get_ws_psnr(image1, image2, max_value=1.0):
     h = image1.shape[-2]
-    lats = torch.tensor([math.pi * (0.5 - (r + 0.5) / h) for r in range(h)], dtype=image1.dtype, device=image1.device)
-    cos_lats = torch.cos(lats).view(1, h, 1)
-    cos_lats_norm = cos_lats / cos_lats.mean()
+    phis = torch.arange(h + 1, device=image1.device, dtype=image1.dtype) * torch.pi / h
+    cos_phis = torch.cos(phis[:-1]) - torch.cos(phis[1:])
+    cos_lats_norm = (cos_phis / cos_phis.mean()).view(1, h, 1)
     
     mse = torch.mean(((image1 - image2) ** 2) * cos_lats_norm)
     if mse.item() <= 1e-7:

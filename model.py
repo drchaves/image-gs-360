@@ -192,6 +192,8 @@ class GaussianSplatting2D(nn.Module):
         bpp_compressed = float(bits_compressed) / self.num_pixels
         bppc_compressed = bpp_compressed / self.feat_dim
         self.num_bytes = bytes_compressed
+        self.num_bytes_img = bytes_compressed
+        self.num_bytes_arm = 0.0
         self.worklog.info(f"Compressed: {bytes_compressed/1e3:.2f} KB | {bpp_compressed:.3f} bpp | {bppc_compressed:.3f} bppc")
         self.worklog.info(f"Compression rate: {bpp_uncompressed/bpp_compressed:.2f}x | {100.0*bpp_compressed/bpp_uncompressed:.2f}%")
         self.worklog.info("***********************************************")
@@ -366,6 +368,8 @@ class GaussianSplatting2D(nn.Module):
                      "flip": self.flip_final,
                      "msssim": self.msssim_final,
                      "bytes": self.num_bytes,
+                     "bytes_img": getattr(self, 'num_bytes_img', self.num_bytes),
+                     "bytes_arm": getattr(self, 'num_bytes_arm', 0.0),
                      "time": self.total_time_accum,
                      "state_dict": self.state_dict(),
                      "optim_state_dict": self.optimizer.state_dict()}
@@ -561,7 +565,13 @@ class GaussianSplatting2D(nn.Module):
             self.total_loss += self.rate_loss
             
             # Update estimated bytes for accurate BPP logging during training
-            self.num_bytes = (nll.item() * sorted_symbols.numel()) / 8.0
+            # Update estimated bytes for accurate BPP logging during training
+            self.num_bytes_img = (nll.item() * sorted_symbols.numel()) / 8.0
+            
+            # Incorporate the size of the ARM model weights into the final size
+            arm_params = sum(p.numel() for p in self.arm.parameters())
+            self.num_bytes_arm = arm_params * 4.0  # 4 bytes per float32 parameter
+            self.num_bytes = self.num_bytes_img + self.num_bytes_arm
             
             # Breakdown of BPP components for debugging
             bits_pos = nll_tensor[:, :2].sum().item()

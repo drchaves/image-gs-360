@@ -20,7 +20,7 @@ class GaussianARM(nn.Module):
         # x shape: [Batch=1, Features, SeqLen]
         # Pad left by context_size to make it strictly causal
         x_padded = F.pad(x, (self.context_size, 0))
-        x_padded = x_padded[..., :-1] 
+        x_padded = x_padded[..., :-1]
         
         out = self.net(x_padded)
         out = out.transpose(1, 2).squeeze(0) # [SeqLen, Features*2]
@@ -36,14 +36,24 @@ def get_z_order_indices(x, pos_bits):
     x is assumed to be in [0, 1] range shape (N, 2).
     """
     with torch.no_grad():
+        # Grid dimension
         qmax = 2**pos_bits - 1
+
+        # Normalize x to [0, 1]
         x_min, x_max = x.min(dim=0, keepdim=True).values, x.max(dim=0, keepdim=True).values
+
+        # Calculate scale to map the range to [0, qmax]
+        # -- tamanho físico de cada quadradinho
         scale = torch.clamp((x_max - x_min) / qmax, min=1e-8)
+
+        # Convert to integer grid coordinates
         qx_int = torch.round((x - x_min) / scale).clamp(0, qmax).to(torch.int64)
         
+        # Get x and y coordinates
         x_int = qx_int[:, 0]
         y_int = qx_int[:, 1]
         
+        # Interleave bits of x and y to create Morton code
         morton_code = torch.zeros_like(x_int, dtype=torch.int64)
         for i in range(pos_bits):
             bit_x = (x_int >> i) & 1
@@ -60,17 +70,20 @@ def discrete_logistic_prob(mu, scale, symbols, max_symbols):
     symbols: [SeqLen, Features]
     max_symbols: [Features] or scalar
     """
+
+    # 10 -> [9.5 - 10.5], 20 -> [19.5 - 20.5] etc
     upper_bound = symbols + 0.5
     lower_bound = symbols - 0.5
     
+    # Cumulative distribution function (CDF)
     cdf_upper = torch.sigmoid((upper_bound - mu) / scale)
     cdf_lower = torch.sigmoid((lower_bound - mu) / scale)
     
     prob = cdf_upper - cdf_lower
     # Edge conditions
     prob = torch.where(symbols == 0, cdf_upper, prob)
-    # If using tensor for max_symbols, unsqueeze appropriately if passed properly
-    # Assuming max_symbol broadcast correctly
     prob = torch.where(symbols == max_symbols, 1.0 - cdf_lower, prob)
+
+    # Prevent division by zero
     return prob.clamp(min=1e-6)
 

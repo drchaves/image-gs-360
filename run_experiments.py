@@ -11,6 +11,10 @@ from PIL import Image
 IMAGES_DIR = "media/images"
 RESULTS_CSV = "resultados_experimentos.csv"
 
+MAX_STEPS = 10000
+USE_STE = True
+ARM_BITS = 8
+
 # Grade de hiperparâmetros para varredura
 NUM_GAUSSIANS_LIST = [10000, 30000, 50000, 100000]
 RATE_LOSS_RATIOS = [0.0, 0.0005, 0.001, 0.005, 0.01]
@@ -32,7 +36,7 @@ def main():
     # Prepara o CSV
     file_exists = os.path.isfile(RESULTS_CSV)
     with open(RESULTS_CSV, mode='a', newline='') as csv_file:
-        fieldnames = ['image_name', 'num_gaussians', 'lambda_rdo', 'psnr', 'ssim', 'msssim', 'lpips', 'bytes', 'bpp_img', 'bpp_arm', 'bpp']
+        fieldnames = ['image_name', 'num_gaussians', 'lambda_rdo', 'max_steps', 'final_step', 'early_stopped', 'use_ste', 'arm_bits', 'psnr', 'ssim', 'msssim', 'lpips', 'bytes', 'bpp_img', 'bpp_arm', 'bpp']
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         if not file_exists:
             writer.writeheader()
@@ -56,9 +60,12 @@ def main():
                         "--num_gaussians", str(num_g),
                         "--rate_loss_ratio", str(r_loss),
                         "--quantize",
-                        "--max_steps", "10000", # Ajuste o número de passos conforme necessário
-                        # A flag --use_erp foi omitida pois focaremos em 2D planar
+                        "--max_steps", str(MAX_STEPS),
+                        "--early_stopping"
                     ]
+                    if USE_STE:
+                        cmd.append("--use_ste")
+                        cmd.extend(["--arm_bits", str(ARM_BITS)])
                     
                     # Executa o main.py
                     try:
@@ -95,11 +102,19 @@ def main():
                     bpp_img = (num_bytes_img * 8) / num_pixels
                     bpp_arm = (num_bytes_arm * 8) / num_pixels
                     
+                    final_step = ckpt_data.get('step', MAX_STEPS)
+                    early_stopped = "True" if final_step < MAX_STEPS else "False"
+                    
                     # Salva no CSV imediatamente
                     writer.writerow({
                         'image_name': img_name,
                         'num_gaussians': num_g,
                         'lambda_rdo': r_loss,
+                        'max_steps': MAX_STEPS,
+                        'final_step': final_step,
+                        'early_stopped': early_stopped,
+                        'use_ste': str(USE_STE),
+                        'arm_bits': ARM_BITS if USE_STE else "-",
                         'psnr': f"{psnr:.2f}",
                         'ssim': f"{ssim:.4f}",
                         'msssim': f"{msssim:.4f}",

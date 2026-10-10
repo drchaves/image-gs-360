@@ -204,7 +204,12 @@ class GaussianSplatting2D(nn.Module):
         self.rate_loss = None
         if self.rate_loss_ratio > 0:
             num_f = 2 + 2 + 1 + self.feat_dim # xy, scale, rot, feat
-            self.arm = GaussianARM(num_features=num_f).to(self.device)
+            self.arm = GaussianARM(
+                num_features=num_f,
+                use_ste=getattr(args, 'use_ste', False),
+                arm_bits=getattr(args, 'arm_bits', 8),
+                arch_type=getattr(args, 'arm_arch', 'original')
+            ).to(self.device)
 
         self.l1_loss = None
         self.l2_loss = None
@@ -235,6 +240,10 @@ class GaussianSplatting2D(nn.Module):
             self.check_decay_steps = args.check_decay_steps
             self.max_decay_times = args.max_decay_times
             self.decay_threshold = args.decay_threshold
+            
+        # Parada Antecipada
+        self.early_stopping = getattr(args, 'early_stopping', False)
+        self.early_stopping_patience = getattr(args, 'early_stopping_patience', 5)
 
     def _init_pos_scale_feat(self, args):
         self.init_mode = args.init_mode
@@ -370,6 +379,7 @@ class GaussianSplatting2D(nn.Module):
                      "bytes": self.num_bytes,
                      "bytes_img": getattr(self, 'num_bytes_img', self.num_bytes),
                      "bytes_arm": getattr(self, 'num_bytes_arm', 0.0),
+                     "num_gaussians_final": getattr(self, 'num_gaussians', 0),
                      "time": self.total_time_accum,
                      "state_dict": self.state_dict(),
                      "optim_state_dict": self.optimizer.state_dict()}
@@ -476,6 +486,10 @@ class GaussianSplatting2D(nn.Module):
         self.render_time_accum, self.total_time_accum = 0.0, 0.0
         self.lpips_final, self.flip_final, self.msssim_final = 1.0, 1.0, 0.0
 
+        # Variáveis de early stopping
+        self.best_es_psnr = 0.0
+        self.es_wait = 0
+
         self.step = 0
         with torch.no_grad():
             self._log_images(log_final=False, plot_gaussians=self.vis_gaussians)
@@ -498,6 +512,22 @@ class GaussianSplatting2D(nn.Module):
                     self._evaluate(log=True, upsample=False)
                     if not self.disable_lr_schedule and self.num_gaussians == self.total_num_gaussians:
                         terminate = self._lr_schedule()
+                    
+                    if getattr(self, 'early_stopping', False):
+                        if self.psnr_curr > self.best_es_psnr + 0.01:
+                            self.best_es_psnr = self.psnr_curr
+                            self.es_wait = 0
+                        else:
+                            self.es_wait += 1
+                            if self.es_wait >= self.early_stopping_patience:
+                                if self.num_gaussians < self.total_num_gaussians:
+                                    self.worklog.info(f"*** EARLY STOPPING ADDITION ***: Congelando crescimento em {self.num_gaussians} gaussianas pois o PSNR atingiu um platô.")
+                                    self.total_num_gaussians = self.num_gaussians
+                                    self.es_wait = 0  # Reseta para permitir o fine-tuning final
+                                else:
+                                    self.worklog.info(f"*** EARLY STOPPING TRAINING *** at step {self.step}: PSNR did not improve by 0.01 for {self.early_stopping_patience} consecutive evaluations.")
+                                    terminate = True
+                                
                 if self.step % self.save_image_steps == 0:
                     self._log_images(log_final=False, plot_gaussians=self.vis_gaussians)
                 if self.step % self.save_ckpt_steps == 0 and self.num_gaussians == self.total_num_gaussians:
@@ -570,7 +600,12 @@ class GaussianSplatting2D(nn.Module):
             
             # Incorporate the size of the ARM model weights into the final size
             arm_params = sum(p.numel() for p in self.arm.parameters())
-            self.num_bytes_arm = arm_params * 4.0  # 4 bytes per float32 parameter
+            
+            # Se estivermos usando STE, o custo é dinâmico baseado em 'arm_bits'
+            # Caso contrário, custa 4 bytes (Float32 original).
+            bytes_per_param = (getattr(self.arm, 'arm_bits', 8) / 8.0) if getattr(self.arm, 'use_ste', False) else 4.0
+            
+            self.num_bytes_arm = arm_params * bytes_per_param
             self.num_bytes = self.num_bytes_img + self.num_bytes_arm
             
             # Breakdown of BPP components for debugging

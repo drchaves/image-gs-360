@@ -55,6 +55,11 @@ def main(args):
 if __name__ == "__main__":
     torch.hub.set_dir("models/torch")
     parser = argparse.ArgumentParser()
+    parser.add_argument('--use_ste', action='store_true', help='Habilita a quantização dos parâmetros do ARM via STE para reduzir o BPP da rede.')
+    parser.add_argument('--arm_bits', type=int, default=8, help='Quantidade de bits para a quantização STE do ARM (padrão: 8).')
+    parser.add_argument('--arm_arch', type=str, default="original", choices=["original", "shallow", "deep"], help='Arquitetura do ARM.')
+    parser.add_argument('--early_stopping', action='store_true', help='Ativa a parada antecipada quando o PSNR atinge um platô.')
+    parser.add_argument('--early_stopping_patience', type=int, default=5, help='Paciência para o early stopping (num. de avaliações sem melhora).')
     parser = load_cfg(cfg_path="cfgs/default.yaml", parser=parser)
     arguments = parser.parse_args()
     main(arguments)

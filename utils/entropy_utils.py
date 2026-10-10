@@ -2,19 +2,87 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class ClippingSTEFunc(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, weight, num_bits=8, clip_val=1.0):
+        # 1. Clipping: limita os valores
+        w_clipped = torch.clamp(weight, -clip_val, clip_val)
+        
+        # 2. Escala e Quantização
+        scale = (2**(num_bits - 1) - 1) / clip_val
+        q_weight = torch.round(w_clipped * scale)
+        
+        # 3. Dequantização para o forward
+        dq_weight = q_weight / scale
+        
+        ctx.save_for_backward(weight)
+        ctx.clip_val = clip_val
+        return dq_weight
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        weight, = ctx.saved_tensors
+       
+        grad_weight = grad_output.clone()
+        grad_weight[weight > ctx.clip_val] = 0
+        grad_weight[weight < -ctx.clip_val] = 0
+        
+        return grad_weight, None, None
+
+class QuantizedConv1d(nn.Conv1d):
+    def __init__(self, *args, num_bits=8, clip_val=1.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_bits = num_bits
+        self.clip_val = clip_val
+
+    def forward(self, input):
+        q_weight = ClippingSTEFunc.apply(self.weight, self.num_bits, self.clip_val)
+        q_bias = ClippingSTEFunc.apply(self.bias, self.num_bits, self.clip_val) if self.bias is not None else None
+        
+        return F.conv1d(input, q_weight, q_bias, self.stride,
+                        self.padding, self.dilation, self.groups)
+
 class GaussianARM(nn.Module):
-    def __init__(self, num_features: int, context_size: int = 16):
+    def __init__(self, num_features: int, context_size: int = 16, use_ste: bool = False, arm_bits: int = 8, arch_type: str = "original"):
         super().__init__()
         self.num_features = num_features
         self.context_size = context_size
+        self.use_ste = use_ste
+        self.arm_bits = arm_bits
+        self.arch_type = arch_type
         
-        self.net = nn.Sequential(
-            nn.Conv1d(num_features, 64, kernel_size=context_size),
-            nn.ReLU(),
-            nn.Conv1d(64, 64, kernel_size=1),
-            nn.ReLU(),
-            nn.Conv1d(64, num_features * 2, kernel_size=1) 
-        )
+        Conv = QuantizedConv1d if use_ste else nn.Conv1d
+        kwargs = {"num_bits": arm_bits, "clip_val": 1.0} if use_ste else {}
+
+        if arch_type == "original":
+            # Parâmetros: ~13.456 (assumindo 8 features e context_size=16)
+            self.net = nn.Sequential(
+                Conv(num_features, 64, kernel_size=context_size, **kwargs),
+                nn.ReLU(),
+                Conv(64, 64, kernel_size=1, **kwargs),
+                nn.ReLU(),
+                Conv(64, num_features * 2, kernel_size=1, **kwargs) 
+            )
+        elif arch_type == "shallow":
+            # Mais rasa e mais larga (W=93) -> Parâmetros: ~13.501
+            self.net = nn.Sequential(
+                Conv(num_features, 93, kernel_size=context_size, **kwargs),
+                nn.ReLU(),
+                Conv(93, num_features * 2, kernel_size=1, **kwargs) 
+            )
+        elif arch_type == "deep":
+            # Mais profunda e mais estreita (W=53) -> Parâmetros: ~13.425
+            self.net = nn.Sequential(
+                Conv(num_features, 53, kernel_size=context_size, **kwargs),
+                nn.ReLU(),
+                Conv(53, 53, kernel_size=1, **kwargs),
+                nn.ReLU(),
+                Conv(53, 53, kernel_size=1, **kwargs),
+                nn.ReLU(),
+                Conv(53, num_features * 2, kernel_size=1, **kwargs) 
+            )
+        else:
+            raise ValueError(f"Unknown arch_type: {arch_type}")
     
     def forward(self, x):
         # x shape: [Batch=1, Features, SeqLen]

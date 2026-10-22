@@ -182,3 +182,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# --- Projeto: arquivos locais/pesados que não devem ir ao Git ---
+Miniconda3-*.sh
+plot_env/
+nohup.out
+*.bak
+test_*.png
+tcc_diego/
+scripts/

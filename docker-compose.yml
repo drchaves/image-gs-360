@@ -1,0 +1,16 @@
+services:
+  image-gs:
+    build: .
+    image: image-gs:cu124
+    volumes:
+      - .:/workspace
+    shm_size: "8gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Exemplo: docker compose run --rm image-gs python run_experiments_arm_arch.py
+

@@ -1,0 +1,14 @@
+.git
+venv
+plot_env
+results
+nohup.out
+__pycache__
+*.sh
+*.pdf
+*.png
+*.bak
+tcc_diego
+gsplat/build
+gsplat/**/__pycache__
+

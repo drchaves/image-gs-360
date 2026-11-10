@@ -1,0 +1,103 @@
+% ===== Tabela Etapa 1: Ablação de Contexto C in {1, 2, 3, 4, 8, 16, 32} =====
+\begin{table}[htbp]
+    \centering
+    \caption{Etapa 1: Ablação do tamanho de contexto $C \in \{1, 2, 3, 4, 8, 16, 32\}$ com arquitetura \textit{Shallow} estabilizada ($N=100.000$, médias nas 45 imagens).}
+    \label{tab:etapa1_contextos}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{|c|c|c|c|c|c|c|c|c|}
+        \hline
+        $\boldsymbol{C}$ & \textbf{bpp\_arm ($\downarrow$)} & \textbf{bpp\_img ($\downarrow$)} & \textbf{bpp Total ($\downarrow$)} & \textbf{PSNR (dB) ($\uparrow$)} & \textbf{MS-SSIM ($\uparrow$)} & \textbf{LPIPS ($\downarrow$)} & \textbf{BD-Rate (bpp Total)} & \textbf{BD-Rate (Só bpp\_img)} \\ \hline\hline
+        1 & 0,0045 & 1,7470 & 1,7514 & 35,04 & 0,9816 & 0,0696 & $-2{,}95\%$ & $-1{,}79\%$ \\ \hline
+        2 & 0,0059 & 1,7370 & 1,7429 & 35,41 & 0,9834 & 0,0647 & $-4{,}56\%$ & $-3{,}50\%$ \\ \hline
+        3 & 0,0073 & 1,7608 & 1,7681 & 34,85 & 0,9811 & 0,0717 & $-1{,}72\%$ & $-0{,}69\%$ \\ \hline
+        4 & 0,0087 & 1,7544 & 1,7631 & 35,00 & 0,9820 & 0,0692 & $-1{,}94\%$ & $-1{,}00\%$ \\ \hline
+        8 & 0,0144 & 1,7642 & 1,7786 & 35,11 & 0,9827 & 0,0672 & $-1{,}41\%$ & $-0{,}78\%$ \\ \hline
+        16 & 0,0258 & 1,7802 & 1,8060 & 35,36 & 0,9837 & 0,0642 & Âncora & Âncora \\ \hline
+        32 & 0,0485 & 1,8119 & 1,8603 & 35,51 & 0,9845 & 0,0619 & $+2{,}44\%$ & $+1{,}19\%$ \\ \hline
+    \end{tabular}
+    }
+    \fonte O autor (2026).
+\end{table}
+
+% ===== Tabela Etapa 2: Validação de Arquitetura fixando C*=2 =====
+\begin{table}[htbp]
+    \centering
+    \caption{Etapa 2: Comparação entre as arquiteturas \textit{Original}, \textit{Shallow} e \textit{Deep} fixando o melhor contexto $C^*=2$ ($N=100.000$, médias nas 45 imagens).}
+    \label{tab:etapa2_arquiteturas_c2}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{|l|c|c|c|c|c|c|c|c|}
+        \hline
+        \textbf{Arquitetura ($C^*=2$)} & \textbf{bpp\_arm ($\downarrow$)} & \textbf{bpp\_img ($\downarrow$)} & \textbf{bpp Total ($\downarrow$)} & \textbf{PSNR (dB) ($\uparrow$)} & \textbf{MS-SSIM ($\uparrow$)} & \textbf{LPIPS ($\downarrow$)} & \textbf{BD-Rate (bpp Total)} & \textbf{BD-Rate (Só bpp\_img)} \\ \hline\hline
+        \textit{Original} ($C=2$) & 0,0120 & 1,7856 & 1,7976 & 35,24 & 0,9830 & 0,0656 & Âncora & Âncora \\ \hline
+        \textit{Shallow} ($C=2$) & 0,0059 & 1,7370 & 1,7429 & 35,41 & 0,9834 & 0,0647 & $-4{,}05\%$ & $-3{,}73\%$ \\ \hline
+        \textit{Deep} ($C=2$) & 0,0143 & 1,7797 & 1,7940 & 35,34 & 0,9835 & 0,0636 & $-0{,}43\%$ & $-0{,}56\%$ \\ \hline
+    \end{tabular}
+    }
+    \fonte O autor (2026).
+\end{table}
+
+% ===== Tabela Etapa 3 (A): comparação pareada por N e lambda =====
+\begin{table}[htbp]
+    \centering
+    \caption{Comparação entre o \textit{Image-GS} original e o \textit{GaussianARM} vencedor (\textit{Shallow}, $C=2$, estabilizado), por número de gaussianas $N$ e $\lambda$. Médias sobre 45 imagens; o bpp do método inclui os pesos do ARM.}
+    \label{tab:final_pareada}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{|c|c|cc|cc|c|c|}
+        \hline
+        \multirow{2}{*}{$\boldsymbol{N}$} & \multirow{2}{*}{$\boldsymbol{\lambda}$} & \multicolumn{2}{c|}{\textbf{\textit{Image-GS}}} & \multicolumn{2}{c|}{\textbf{\textit{GaussianARM} (\textit{Shallow}, $C=2$)}} & \multirow{2}{*}{$\boldsymbol{\Delta}$\textbf{bpp}} & \multirow{2}{*}{$\boldsymbol{\Delta}$\textbf{PSNR (dB)}} \\ \cline{3-6}
+        & & \textbf{bpp ($\downarrow$)} & \textbf{PSNR (dB) ($\uparrow$)} & \textbf{bpp ($\downarrow$)} & \textbf{PSNR (dB) ($\uparrow$)} & & \\ \hline\hline
+        \multirow{3}{*}{10.000} & 0,0005 & 0,2670 & 32,18 & 0,2002 & 31,75 & $-25{,}0\%$ & $-0{,}44$ \\ \cline{2-8}
+         & 0,0025 & 0,2670 & 32,18 & 0,1933 & 30,77 & $-27{,}6\%$ & $-1{,}42$ \\ \cline{2-8}
+         & 0,0075 & 0,2670 & 32,18 & 0,1837 & 28,19 & $-31{,}2\%$ & $-3{,}99$ \\ \hline
+        \multirow{3}{*}{30.000} & 0,0005 & 0,8011 & 35,55 & 0,5778 & 34,92 & $-27{,}9\%$ & $-0{,}62$ \\ \cline{2-8}
+         & 0,0025 & 0,8011 & 35,55 & 0,5521 & 33,65 & $-31{,}1\%$ & $-1{,}89$ \\ \cline{2-8}
+         & 0,0075 & 0,8011 & 35,55 & 0,5162 & 30,23 & $-35{,}6\%$ & $-5{,}31$ \\ \hline
+        \multirow{3}{*}{50.000} & 0,0005 & 1,3351 & 37,09 & 0,9478 & 36,39 & $-29{,}0\%$ & $-0{,}69$ \\ \cline{2-8}
+         & 0,0025 & 1,3351 & 37,09 & 0,9045 & 34,76 & $-32{,}3\%$ & $-2{,}33$ \\ \cline{2-8}
+         & 0,0075 & 1,3351 & 37,09 & 0,8346 & 30,85 & $-37{,}5\%$ & $-6{,}24$ \\ \hline
+        \multirow{3}{*}{100.000} & 0,0005 & 2,6703 & 38,96 & 1,8607 & 38,28 & $-30{,}3\%$ & $-0{,}68$ \\ \cline{2-8}
+         & 0,0025 & 2,6703 & 38,96 & 1,7484 & 36,32 & $-34{,}5\%$ & $-2{,}64$ \\ \cline{2-8}
+         & 0,0075 & 2,6703 & 38,96 & 1,6195 & 31,62 & $-39{,}3\%$ & $-7{,}34$ \\ \hline
+    \end{tabular}
+    }
+    \fonte O autor (2026).
+\end{table}
+
+% ===== Tabela Etapa 3 (B): BD-Rate (PSNR) em relação ao Image-GS original =====
+\begin{table}[htbp]
+    \centering
+    \caption{BD-Rate (PSNR) do \textit{GaussianARM} (\textit{Shallow}, $C=2$) em relação ao \textit{Image-GS} original. Cada coluna $\lambda$ usa a curva sobre $N$ daquele $\lambda$; \emph{Envelope} usa a fronteira de Pareto dos 12 pontos. Entre colchetes, IC de 95\% (\textit{bootstrap} sobre imagens). Valores negativos indicam menor taxa para o mesmo PSNR.}
+    \label{tab:final_bdrate}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{|l|c|c|c|c|}
+        \hline
+        \textbf{Escopo} & $\boldsymbol{\lambda=0{,}0005}$ & $\boldsymbol{\lambda=0{,}0025}$ & $\boldsymbol{\lambda=0{,}0075}$ & \textbf{Envelope} \\ \hline\hline
+        Global (45 imagens) & $-11{,}01\%$ [$-14{,}04$; $-7{,}29$] & $+40{,}21\%$ [$+20{,}06$; $+66{,}35$] & --- [$+331{,}01$; $+508{,}50$] & $-7{,}48\%$ [$-9{,}61$; $+10{,}29$] \\ \hline
+        Anime & $-11{,}45\%$ & $+50{,}08\%$ & --- & $-6{,}00\%$ \\ \hline
+        Arte & $-16{,}29\%$ & $+42{,}58\%$ & --- & $-11{,}92\%$ \\ \hline
+        Pintura & $-15{,}49\%$ & $+5{,}40\%$ & $+355{,}96\%$ & $-5{,}99\%$ \\ \hline
+        Fotografia & $-5{,}89\%$ & $+85{,}29\%$ & --- & $+0{,}64\%$ \\ \hline
+        Vetorial & $-2{,}55\%$ & $+46{,}00\%$ & $+456{,}44\%$ & $+21{,}18\%$ \\ \hline
+    \end{tabular}
+    }
+    \fonte O autor (2026).
+\end{table}
+
+% ===== Tabela Etapa 3 (C): progressão das etapas em N=100.000 =====
+\begin{table}[htbp]
+    \centering
+    \caption{Progressão das etapas em $N=100.000$ gaussianas (médias sobre os três $\lambda$ e 44 imagens). O BD-Rate é calculado sobre o PSNR em relação ao \textit{Image-GS} original (curva sobre $N$) e à etapa imediatamente anterior.}
+    \label{tab:progressao_etapas}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{|l|c|c|c|c|}
+        \hline
+        \textbf{Etapa} & \textbf{bpp ($\downarrow$)} & \textbf{PSNR (dB) ($\uparrow$)} & \textbf{BD-Rate vs. \textit{Image-GS}} & \textbf{BD-Rate vs. etapa anterior} \\ \hline\hline
+        Original, $C=16$, sem estab. & 1,8423 & 35,40 & $+165{,}63\%$ & --- \\ \hline
+        Original, $C=16$, estab. & 1,8061 & 35,48 & $+158{,}57\%$ & $-1{,}56\%$ \\ \hline
+        \textit{Shallow}, $C=16$, estab. & 1,8045 & 35,55 & $+151{,}86\%$ & $-0{,}18\%$ \\ \hline
+        \textit{Shallow}, $C=4$, estab. & 1,7617 & 35,18 & $+149{,}41\%$ & $-1{,}87\%$ \\ \hline
+        \textit{Shallow}, $C=2$, estab. (Final) & 1,7421 & 35,59 & $+137{,}70\%$ & $-2{,}62\%$ \\ \hline
+    \end{tabular}
+    }
+    \fonte O autor (2026).
+\end{table}

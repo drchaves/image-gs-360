@@ -193,6 +193,5 @@ test_*.png
 tcc_diego/
 prompt_linear_algebra.md
 rd_linear.csv
-utils/linear_compressor.py
 scripts/*linear*.py
 

@@ -185,9 +185,14 @@ cython_debug/
 
 # --- Projeto: arquivos locais/pesados que não devem ir ao Git ---
 Miniconda3-*.sh
+*.tar.gz
 plot_env/
-nohup.out
+nohup*.out
 *.bak
 test_*.png
 tcc_diego/
-scripts/
+prompt_linear_algebra.md
+rd_linear.csv
+utils/linear_compressor.py
+scripts/*linear*.py
+

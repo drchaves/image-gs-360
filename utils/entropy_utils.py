@@ -1,10 +1,11 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class ClippingSTEFunc(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, weight, num_bits=8, clip_val=1.0):
+    def forward(ctx, weight, num_bits=8, clip_val=1.0, stabilize_grads=False):
         # 1. Clipping: limita os valores
         w_clipped = torch.clamp(weight, -clip_val, clip_val)
         
@@ -17,6 +18,7 @@ class ClippingSTEFunc(torch.autograd.Function):
         
         ctx.save_for_backward(weight)
         ctx.clip_val = clip_val
+        ctx.stabilize_grads = stabilize_grads
         return dq_weight
 
     @staticmethod
@@ -24,35 +26,51 @@ class ClippingSTEFunc(torch.autograd.Function):
         weight, = ctx.saved_tensors
        
         grad_weight = grad_output.clone()
-        grad_weight[weight > ctx.clip_val] = 0
-        grad_weight[weight < -ctx.clip_val] = 0
+        if ctx.stabilize_grads:
+            # Zera apenas gradientes que empurram o peso ainda mais para fora de [-clip_val, clip_val],
+            # permitindo que pesos saturados consigam retornar para a região ativa.
+            grad_weight[(weight > ctx.clip_val) & (grad_output < 0)] = 0
+            grad_weight[(weight < -ctx.clip_val) & (grad_output > 0)] = 0
+        else:
+            grad_weight[weight > ctx.clip_val] = 0
+            grad_weight[weight < -ctx.clip_val] = 0
         
-        return grad_weight, None, None
+        return grad_weight, None, None, None
 
 class QuantizedConv1d(nn.Conv1d):
-    def __init__(self, *args, num_bits=8, clip_val=1.0, **kwargs):
+    def __init__(self, *args, num_bits=8, clip_val=1.0, stabilize_grads=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_bits = num_bits
         self.clip_val = clip_val
+        self.stabilize_grads = stabilize_grads
 
     def forward(self, input):
-        q_weight = ClippingSTEFunc.apply(self.weight, self.num_bits, self.clip_val)
-        q_bias = ClippingSTEFunc.apply(self.bias, self.num_bits, self.clip_val) if self.bias is not None else None
+        q_weight = ClippingSTEFunc.apply(self.weight, self.num_bits, self.clip_val, self.stabilize_grads)
+        q_bias = ClippingSTEFunc.apply(self.bias, self.num_bits, self.clip_val, self.stabilize_grads) if self.bias is not None else None
         
         return F.conv1d(input, q_weight, q_bias, self.stride,
                         self.padding, self.dilation, self.groups)
 
 class GaussianARM(nn.Module):
-    def __init__(self, num_features: int, context_size: int = 16, use_ste: bool = False, arm_bits: int = 8, arch_type: str = "original"):
+    def __init__(self, num_features: int, context_size: int = 16, use_ste: bool = False, arm_bits: int = 8, arch_type: str = "original", stabilize_grads: bool = False,
+                 log_scale_min: float = -7.0, log_scale_max: float = 5.0,
+                 stab_scale_clamp: bool = True, stab_ste: bool = True):
+        # log_scale_min/max: limites do clamp da ativação bruta s_t (ativo somente com stabilize_grads e stab_scale_clamp).
+        # stab_scale_clamp / stab_ste: permitem desligar individualmente componentes da estabilização (ablação).
+        # Os valores padrão reproduzem exatamente o comportamento anterior.
         super().__init__()
         self.num_features = num_features
         self.context_size = context_size
         self.use_ste = use_ste
         self.arm_bits = arm_bits
         self.arch_type = arch_type
+        self.stabilize_grads = stabilize_grads
+        self.log_scale_min = log_scale_min
+        self.log_scale_max = log_scale_max
+        self.stab_scale_clamp = stab_scale_clamp
         
         Conv = QuantizedConv1d if use_ste else nn.Conv1d
-        kwargs = {"num_bits": arm_bits, "clip_val": 1.0} if use_ste else {}
+        kwargs = {"num_bits": arm_bits, "clip_val": 1.0, "stabilize_grads": (stabilize_grads and stab_ste)} if use_ste else {}
 
         if arch_type == "original":
             # Parâmetros: ~13.456 (assumindo 8 features e context_size=16)
@@ -94,8 +112,12 @@ class GaussianARM(nn.Module):
         out = out.transpose(1, 2).squeeze(0) # [SeqLen, Features*2]
         
         mu = out[:, :self.num_features]
+        raw_log_scale = out[:, self.num_features:]
+        if self.stabilize_grads and self.stab_scale_clamp:
+            # Impede explosão da exponencial (max) e colapso da escala (min)
+            raw_log_scale = torch.clamp(raw_log_scale, min=self.log_scale_min, max=self.log_scale_max)
         # Adding a small eps to scale to prevent division by zero
-        scale = torch.exp(out[:, self.num_features:]) + 1e-4
+        scale = torch.exp(raw_log_scale) + 1e-4
         return mu, scale
 
 def get_z_order_indices(x, pos_bits):
@@ -154,4 +176,30 @@ def discrete_logistic_prob(mu, scale, symbols, max_symbols):
 
     # Prevent division by zero
     return prob.clamp(min=1e-6)
+
+
+def discrete_logistic_nll(mu, scale, symbols, max_symbols, stabilize_grads=False):
+    """
+    Calcula a Negative Log-Likelihood em bits (-log2(P)) para a distribuição logística discreta.
+    Quando stabilize_grads=True, preserva exatamente o forward e backward onde prob > 1e-6, e
+    injeta um gradiente surrogate em log-space (estilo PixelCNN++) apenas nos pontos saturados
+    (prob <= 1e-6) onde o clamp zeraria o gradiente, resgatando canais mortos do ARM.
+    """
+    prob = discrete_logistic_prob(mu, scale, symbols, max_symbols)
+    nll_bits = -torch.log2(prob)
+    if not stabilize_grads:
+        return nll_bits
+
+    # Onde prob > 1e-6, usa o gradiente exato de nll_bits.
+    # Onde prob == 1e-6 (saturado no clamp, gradiente = 0), injeta o gradiente assintótico em log-space
+    # em relação a mu e scale (com symbols.detach()) para puxar o ARM de volta da região saturada.
+    inv_scale = 1.0 / scale
+    mid_in_arm = (symbols.detach() - mu) * inv_scale
+    log_pdf_mid = mid_in_arm - torch.log(scale) - 2.0 * F.softplus(mid_in_arm)
+    tail_surrogate_nll = -log_pdf_mid / math.log(2.0)
+
+    is_saturated = (prob <= 1e-6).detach()
+    surrogate_term = torch.where(is_saturated, tail_surrogate_nll - tail_surrogate_nll.detach(), torch.zeros_like(nll_bits))
+    return nll_bits + surrogate_term
+
 

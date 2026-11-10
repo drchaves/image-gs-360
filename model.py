@@ -37,7 +37,8 @@ from utils.image_utils import (
 from utils.misc_utils import clean_dir, get_latest_ckpt_step, save_cfg, set_random_seed
 
 from utils.quantization_utils import ste_quantize
-from utils.entropy_utils import GaussianARM, get_z_order_indices, discrete_logistic_prob
+from utils.entropy_utils import GaussianARM, QuantizedConv1d, get_z_order_indices, discrete_logistic_prob, discrete_logistic_nll
+from utils.linear_compressor import LinearBlockCompressor
 import torchac
 
 from utils.saliency_utils import get_smap
@@ -57,6 +58,7 @@ class GaussianSplatting2D(nn.Module):
         self._init_logging(args)
         self._init_target(args)
         self._init_bit_precision(args)
+        self._init_compression(args)
         self._init_gaussians(args)
         self._init_loss(args)
         self._init_optimization(args)
@@ -148,6 +150,26 @@ class GaussianSplatting2D(nn.Module):
         self.rot_bits = args.rot_bits
         self.feat_bits = args.feat_bits
 
+    def _init_compression(self, args):
+        self.compression_mode = getattr(args, 'compression_mode', 'autoregressive')
+        if self.compression_mode not in ('none', 'autoregressive', 'linear_subspace'):
+            raise ValueError(f"Unknown compression_mode: {self.compression_mode}")
+        self.linear_compressor = None
+        if self.compression_mode == 'linear_subspace':
+            self.linear_compressor = LinearBlockCompressor(
+                block_size=getattr(args, 'block_size', 16),
+                num_components=getattr(args, 'num_components', 6),
+                quant_bits=getattr(args, 'quant_bits', 8),
+                pos_quant_bits=getattr(args, 'pos_quant_bits', 0))
+
+    def _gaussian_dict(self):
+        return {"xy": self.xy, "scale": self.scale, "rot": self.rot, "feat": self.feat}
+
+    @torch.no_grad()
+    def _set_gaussians(self, gaussians):
+        for key, value in gaussians.items():
+            getattr(self, key).copy_(value)
+
     def _init_gaussians(self, args):
         self.num_gaussians = args.num_gaussians
         self.total_num_gaussians = args.num_gaussians
@@ -188,6 +210,8 @@ class GaussianSplatting2D(nn.Module):
         bppc_uncompressed = bpp_uncompressed / self.feat_dim
         self.worklog.info(f"Uncompressed: {bytes_uncompressed/1e3:.2f} KB | {bpp_uncompressed:.3f} bpp | {bppc_uncompressed:.3f} bppc")
         bits_compressed = (2*self.pos_bits + 2*self.scale_bits + self.rot_bits + self.feat_dim*self.feat_bits) * self.total_num_gaussians
+        if self.linear_compressor is not None:
+            bits_compressed = self.linear_compressor.estimate_bits(self.total_num_gaussians, 3 + self.feat_dim)
         bytes_compressed = bits_compressed / 8.0
         bpp_compressed = float(bits_compressed) / self.num_pixels
         bppc_compressed = bpp_compressed / self.feat_dim
@@ -200,15 +224,28 @@ class GaussianSplatting2D(nn.Module):
 
     def _init_loss(self, args):
         self.use_erp = getattr(args, 'use_erp', False)
+        self.stabilize_grads = getattr(args, 'stabilize_grads', False)
+        self.grad_clip_norm = getattr(args, 'grad_clip_norm', 1.0)
+        # Ablação da estabilização: componentes desligados individualmente (padrão: nenhum)
+        # Valores válidos: surrogate, clamp, clip, ste, adam
+        self.stab_disable = set(getattr(args, 'stab_disable', None) or [])
         self.rate_loss_ratio = getattr(args, 'rate_loss_ratio', 1e-4) # Entropy loss
+        if self.compression_mode != 'autoregressive':
+            self.rate_loss_ratio = 0.0  # ARM / arithmetic coding only exist in 'autoregressive' mode
         self.rate_loss = None
         if self.rate_loss_ratio > 0:
             num_f = 2 + 2 + 1 + self.feat_dim # xy, scale, rot, feat
             self.arm = GaussianARM(
                 num_features=num_f,
+                context_size=getattr(args, 'arm_context', 16),
                 use_ste=getattr(args, 'use_ste', False),
                 arm_bits=getattr(args, 'arm_bits', 8),
-                arch_type=getattr(args, 'arm_arch', 'original')
+                arch_type=getattr(args, 'arm_arch', 'original'),
+                stabilize_grads=self.stabilize_grads,
+                log_scale_min=getattr(args, 'log_scale_min', -7.0),
+                log_scale_max=getattr(args, 'log_scale_max', 5.0),
+                stab_scale_clamp='clamp' not in self.stab_disable,
+                stab_ste='ste' not in self.stab_disable
             ).to(self.device)
 
         self.l1_loss = None
@@ -308,6 +345,10 @@ class GaussianSplatting2D(nn.Module):
         checkpoint = torch.load(ckpt_path, weights_only=False)
         self.load_state_dict(checkpoint['state_dict'])
         self.optimizer.load_state_dict(checkpoint['optim_state_dict'])
+        if self.linear_compressor is not None and 'linear_bitstream' in checkpoint:
+            bitstream = {k: v.to(self.device) for k, v in checkpoint['linear_bitstream'].items()}
+            self._set_gaussians(self.linear_compressor.decompress(bitstream))
+            self.worklog.info("Gaussians reconstructed from the linear-subspace bitstream")
         self.start_step = checkpoint["step"]+1
         self.worklog.info(f"Checkpoint '{ckpt_path}' successfully loaded")
         self.worklog.info("***********************************************")
@@ -315,8 +356,34 @@ class GaussianSplatting2D(nn.Module):
     def _save_model(self):
         if self.quantize:
             self._quantize()
+
+        # Linear-subspace mode: compress -> decompress, and evaluate the *reconstructed* Gaussians.
+        linear_bitstream, backup = None, None
+        if self.linear_compressor is not None:
+            with torch.no_grad():
+                linear_bitstream = self.linear_compressor.compress(self._gaussian_dict())
+                reconstructed = self.linear_compressor.decompress(linear_bitstream)
+                bits = self.linear_compressor.compute_bits(linear_bitstream)
+                backup = {k: v.detach().clone() for k, v in self._gaussian_dict().items()}
+                # The decoder returns Gaussians in Morton order; sum-rasterization is order-invariant.
+                self._set_gaussians(reconstructed)
+            self.num_bytes = self.num_bytes_img = bits["total"] / 8.0
+            self.num_bytes_arm = 0.0
+            self.worklog.info(
+                f"Linear subspace (B={self.linear_compressor.block_size}, K={self.linear_compressor.num_components}, "
+                f"Q={self.linear_compressor.quant_bits}b) | BPP: {bits['total']/self.num_pixels:.4f} "
+                f"[Header:{bits['header']/self.num_pixels:.4f} Anchors:{bits['anchors']/self.num_pixels:.4f} "
+                f"PosDeltas:{bits['pos_deltas']/self.num_pixels:.4f} Coef:{bits['coefficients']/self.num_pixels:.4f}] "
+                f"| {bits['total']/8.0/1e3:.2f} KB")
+
         psnr, ssim = self._evaluate(log=False, upsample=False)
         self._evaluate_extra()
+
+        if backup is not None:
+            self._set_gaussians(backup)  # restore the full-precision Gaussians (ckpt keeps them for resuming)
+            bs_path = f"{self.ckpt_dir}/linear_bitstream_step-{self.step:d}.pt"
+            torch.save({k: v.cpu() for k, v in linear_bitstream.items()}, bs_path)
+            self.worklog.info(f"Linear-subspace bitstream successfully saved at {bs_path}")
 
         # Save Bitstream using torchac if ARM is active
         if getattr(self, 'rate_loss_ratio', 0) > 0 and hasattr(self, 'arm'):
@@ -372,6 +439,7 @@ class GaussianSplatting2D(nn.Module):
 
         ckpt_data = {"step": self.step,
                      "psnr": psnr,
+                     "ws_psnr": getattr(self, 'ws_psnr_curr', psnr),
                      "ssim": ssim,
                      "lpips": self.lpips_final,
                      "flip": self.flip_final,
@@ -383,6 +451,8 @@ class GaussianSplatting2D(nn.Module):
                      "time": self.total_time_accum,
                      "state_dict": self.state_dict(),
                      "optim_state_dict": self.optimizer.state_dict()}
+        if linear_bitstream is not None:
+            ckpt_data["linear_bitstream"] = {k: v.cpu() for k, v in linear_bitstream.items()}
         save_path = f"{self.ckpt_dir}/ckpt_step-{self.step:d}.pt"
         torch.save(ckpt_data, save_path)
         self.worklog.info(f"Checkpoint 'ckpt_step-{self.step:d}.pt' successfully saved")
@@ -503,7 +573,18 @@ class GaussianSplatting2D(nn.Module):
             begin = perf_counter()
             self._get_total_loss(images)
             self.total_loss.backward()
+            if getattr(self, 'stabilize_grads', False) and 'clip' not in self.stab_disable:
+                if getattr(self, 'rate_loss_ratio', 0) > 0 and hasattr(self, 'arm'):
+                    torch.nn.utils.clip_grad_norm_(self.arm.parameters(), max_norm=self.grad_clip_norm)
             self.optimizer.step()
+            if getattr(self, 'stabilize_grads', False) and 'ste' not in self.stab_disable and getattr(self, 'rate_loss_ratio', 0) > 0 and hasattr(self, 'arm'):
+                if getattr(self.arm, 'use_ste', False):
+                    with torch.no_grad():
+                        for m in self.arm.modules():
+                            if isinstance(m, QuantizedConv1d):
+                                m.weight.clamp_(-m.clip_val, m.clip_val)
+                                if m.bias is not None:
+                                    m.bias.clamp_(-m.clip_val, m.clip_val)
             self.total_time_accum += (perf_counter() - begin + render_time)
             # Logging
             terminate = False
@@ -588,8 +669,10 @@ class GaussianSplatting2D(nn.Module):
             scale = scale_norm * qmax_tensor
             
             # Calculate negative log likelihood (rate loss)
-            prob = discrete_logistic_prob(mu, scale, sorted_symbols, qmax_tensor)
-            nll_tensor = -torch.log2(prob)
+            nll_tensor = discrete_logistic_nll(
+                mu, scale, sorted_symbols, qmax_tensor,
+                stabilize_grads=(getattr(self, 'stabilize_grads', False) and 'surrogate' not in self.stab_disable)
+            )
             nll = nll_tensor.mean()
             self.rate_loss = nll * self.rate_loss_ratio
             self.total_loss += self.rate_loss
@@ -652,6 +735,7 @@ class GaussianSplatting2D(nn.Module):
         gt_images = torch.pow(self.gt_images_upsampled if upsample else self.gt_images, 1.0/self.gamma)
         psnr = get_psnr(images, gt_images).item()
         ws_psnr = get_ws_psnr(images, gt_images).item()
+        self.ws_psnr_curr = ws_psnr
         ssim = fused_ssim(images.unsqueeze(0), gt_images.unsqueeze(0)).item()
         if log:
             self.psnr_curr, self.ssim_curr = psnr, ssim
@@ -765,6 +849,7 @@ class GaussianSplatting2D(nn.Module):
         new_feat = diff_map.permute(1, 2, 0).reshape(-1, self.feat_dim)[selected]
         new_vis_feat = torch.rand_like(new_feat)
         # Old Gaussians
+        old_params_ref = [self.xy, self.scale, self.rot, self.feat]
         old_xy = self.xy.detach().clone()
         old_scale = self.scale.detach().clone()
         old_rot = self.rot.detach().clone()
@@ -790,6 +875,7 @@ class GaussianSplatting2D(nn.Module):
             visualize_added_gaussians(path, raw_images, old_xy, new_xy, self.input_channels, size=size, every_n=every_n,
                                       alpha=0.8, gamma=self.gamma, save_image_format=self.save_plot_format)
         # Update optimizer
+        old_state = self.optimizer.state if (getattr(self, 'stabilize_grads', False) and 'adam' not in self.stab_disable) else None
         params = [{'params': self.xy, 'lr': self.pos_lr},
                           {'params': self.scale, 'lr': self.scale_lr},
                           {'params': self.rot, 'lr': self.rot_lr},
@@ -797,6 +883,13 @@ class GaussianSplatting2D(nn.Module):
         if getattr(self, 'rate_loss_ratio', 0) > 0 and hasattr(self, 'arm'):
             params.append({'params': self.arm.parameters(), 'lr': 1e-3})
         self.optimizer = torch.optim.Adam(params)
+        if old_state is not None:
+            # Preserva momentos do Adam (exp_avg e exp_avg_sq) apenas para o ARM,
+            # mantendo o reset original com correção de viés (step=1) para as gaussianas.
+            if getattr(self, 'rate_loss_ratio', 0) > 0 and hasattr(self, 'arm'):
+                for p in self.arm.parameters():
+                    if p in old_state:
+                        self.optimizer.state[p] = old_state[p]
         #
         self.worklog.info(f"Step: {self.step:d} | Adding {add_num:d} Gaussians ({self.num_gaussians-add_num:d} -> {self.num_gaussians:d})")
         self.worklog.info("***********************************************")

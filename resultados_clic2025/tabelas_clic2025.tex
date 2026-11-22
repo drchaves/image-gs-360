@@ -1,0 +1,43 @@
+% ===== Tabela 1 CLIC 2025: BD-Rate por Lambda com IC 95% (Bootstrap) =====
+\begin{table}[htbp]
+    \centering
+    \caption{Avaliação no conjunto de teste CLIC 2025 (29 imagens): BD-Rate (PSNR) do \textit{GaussianARM} (\textit{Shallow}, $C=2$) em relação ao \textit{Image-GS} original para os três regimes de $\lambda$. Valores negativos indicam redução de taxa para a mesma qualidade visual.}
+    \label{tab:clic2025_bdrate}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{|c|c|c|c|c|}
+        \hline
+        $\boldsymbol{\lambda}$ & \textbf{BD-Rate Global} & \textbf{IC 95\% (\textit{Bootstrap})} & \textbf{Mediana por Imagem} & \textbf{Imagens com BD-Rate $< 0\%$} \\ \hline\hline
+        0,0001 & $-18{,}71\%$ & $[$-20{,}45$\%;\, $-17{,}02$\%]$ & $-18{,}29\%$ & 28/29 (96.6\%) \\ \hline
+        0,0005 & $-12{,}63\%$ & $[$-19{,}00$\%;\, $-3{,}10$\%]$ & $-18{,}64\%$ & 26/28 (92.9\%) \\ \hline
+        0,0075 & $+392{,}82\%$ & $[$+161{,}79$\%;\, $+490{,}94$\%]$ & $+74{,}30\%$ & 3/15 (20.0\%) \\ \hline
+    \end{tabular}
+    }
+    \fonte O autor (2026).
+\end{table}
+
+% ===== Tabela 2 CLIC 2025: Comparação Pareada por N e Lambda =====
+\begin{table}[htbp]
+    \centering
+    \caption{Comparação pareada no conjunto CLIC 2025 (29 imagens) por número de gaussianas $N$ e multiplicador $\lambda$ entre o \textit{Image-GS} original e o \textit{GaussianARM} (\textit{Shallow}, $C=2$).}
+    \label{tab:clic2025_pareada}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{|c|c|ccc|ccc|c|c|}
+        \hline
+        \multirow{2}{*}{$\boldsymbol{N}$} & \multirow{2}{*}{$\boldsymbol{\lambda}$} & \multicolumn{3}{c|}{\textbf{\textit{Image-GS} (Baseline)}} & \multicolumn{3}{c|}{\textbf{\textit{GaussianARM} (\textit{Shallow}, $C=2$)}} & \multirow{2}{*}{$\boldsymbol{\Delta}$\textbf{bpp}} & \multirow{2}{*}{$\boldsymbol{\Delta}$\textbf{PSNR (dB)}} \\ \cline{3-8}
+        & & \textbf{bpp ($\downarrow$)} & \textbf{PSNR (dB) ($\uparrow$)} & \textbf{MS-SSIM ($\uparrow$)} & \textbf{bpp ($\downarrow$)} & \textbf{PSNR (dB) ($\uparrow$)} & \textbf{MS-SSIM ($\uparrow$)} & & \\ \hline\hline
+        \multirow{3}{*}{10.000}} & 0,0001 & 0,4022 & 28,64 & 0,9294 & 0,3091 & 28,46 & 0,9276 & $-23{,}2\%$ & $-0{,}19$ \\ \cline{2-10}
+         & 0,0005 & 0,4022 & 28,64 & 0,9294 & 0,3017 & 28,34 & 0,9273 & $-25{,}0\%$ & $-0{,}30$ \\ \cline{2-10}
+         & 0,0075 & 0,4022 & 28,64 & 0,9294 & 0,2726 & 25,97 & 0,8883 & $-32{,}2\%$ & $-2{,}68$ \\ \hline
+        \multirow{3}{*}{30.000}} & 0,0001 & 1,2065 & 31,07 & 0,9644 & 0,8978 & 30,88 & 0,9632 & $-25{,}6\%$ & $-0{,}19$ \\ \cline{2-10}
+         & 0,0005 & 1,2065 & 31,07 & 0,9644 & 0,8853 & 30,72 & 0,9629 & $-26{,}6\%$ & $-0{,}35$ \\ \cline{2-10}
+         & 0,0075 & 1,2065 & 31,07 & 0,9644 & 0,7699 & 27,44 & 0,9314 & $-36{,}2\%$ & $-3{,}63$ \\ \hline
+        \multirow{3}{*}{50.000}} & 0,0001 & 2,0109 & 32,27 & 0,9739 & 1,4841 & 32,04 & 0,9728 & $-26{,}2\%$ & $-0{,}23$ \\ \cline{2-10}
+         & 0,0005 & 2,0109 & 32,27 & 0,9739 & 1,4557 & 31,79 & 0,9723 & $-27{,}6\%$ & $-0{,}48$ \\ \cline{2-10}
+         & 0,0075 & 2,0109 & 32,27 & 0,9739 & 1,2594 & 28,07 & 0,9445 & $-37{,}4\%$ & $-4{,}20$ \\ \hline
+        \multirow{3}{*}{100.000}} & 0,0001 & 4,0218 & 33,92 & 0,9830 & 2,9434 & 33,73 & 0,9824 & $-26{,}8\%$ & $-0{,}19$ \\ \cline{2-10}
+         & 0,0005 & 4,0218 & 33,92 & 0,9830 & 2,8684 & 33,33 & 0,9821 & $-28{,}7\%$ & $-0{,}59$ \\ \cline{2-10}
+         & 0,0075 & 4,0218 & 33,92 & 0,9830 & 2,4435 & 29,00 & 0,9586 & $-39{,}2\%$ & $-4{,}92$ \\ \hline
+    \end{tabular}
+    }
+    \fonte O autor (2026).
+\end{table}

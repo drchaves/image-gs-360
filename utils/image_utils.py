@@ -1,5 +1,4 @@
 import os
-import math
 
 import cv2
 import flip_evaluator
@@ -42,17 +41,6 @@ def get_psnr(image1, image2, max_value=1.0):
     psnr = 20*torch.log10(max_value/torch.sqrt(mse))
     return psnr
 
-def get_ws_psnr(image1, image2, max_value=1.0):
-    h = image1.shape[-2]
-    phis = torch.arange(h + 1, device=image1.device, dtype=image1.dtype) * torch.pi / h
-    cos_phis = torch.cos(phis[:-1]) - torch.cos(phis[1:])
-    cos_lats_norm = (cos_phis / cos_phis.mean()).view(1, h, 1)
-    
-    mse = torch.mean(((image1 - image2) ** 2) * cos_lats_norm)
-    if mse.item() <= 1e-7:
-        return float('inf')
-    psnr = 20 * torch.log10(max_value / torch.sqrt(mse))
-    return psnr
 
 def get_grid(h, w, x_lim=np.asarray([0, 1]), y_lim=np.asarray([0, 1])):
     x = torch.linspace(x_lim[0], x_lim[1], steps=w + 1)[:-1] + 0.5 / w
